@@ -12,12 +12,11 @@ public:
 
 private:
     Device _device;
-    Shader2D<Image<float>, Image<float>> mip1_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>> mip2_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>> mip3_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> mip4_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> mip5_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> mip6_shader;
+    Shader2D<Image<float>, Image<float>> _mip1_shader;
+    Shader2D<Image<float>, Image<float>, Image<float>> _mip2_shader;
+    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>> _mip3_shader;
+    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> _mip4_shader;
+    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> _mip5_shader;
     ImageLib() = delete;
     Image<float> load_float_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
     Image<int> load_int_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
@@ -33,7 +32,7 @@ private:
         uint mip);
 
 public:
-    ImageLib(Device device);
+    ImageLib(Device device, luisa::string shader_dir);
     ImageLib(ImageLib const &) = delete;
     ImageLib(ImageLib &&) = delete;
     template<typename T>
