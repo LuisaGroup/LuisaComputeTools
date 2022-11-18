@@ -4,6 +4,7 @@
 #include <runtime/volume.h>
 #include <runtime/command_buffer.h>
 #include <runtime/shader.h>
+#include <vstl/common.h>
 namespace luisa::compute {
 class IBinaryStream;
 class LC_TOOL_API ImageLib {
@@ -62,7 +63,14 @@ public:
         luisa::vector<std::byte> bytes;
         auto header = header_size();
         bytes.push_back_uninitialized(header + image.byte_size());
-        cmd_buffer << image.copy_to(bytes.data() + header) << [this, func = std::move(func), bytes = std::move(bytes), size = image.size(), storage = image.storage(), mip = image.mip_levels()] {
+        auto ptr = bytes.data() + header;
+        for (auto i : vstd::range(image.mip_levels())) {
+            auto view = image.view(i);
+            cmd_buffer << view.copy_to(ptr);
+            ptr += view.byte_size();
+        }
+
+        cmd_buffer << [this, func = std::move(func), bytes = std::move(bytes), size = image.size(), storage = image.storage(), mip = image.mip_levels()]() mutable {
             save_header(bytes, size.x, size.y, 1, storage, mip);
             func(bytes);
         };
@@ -72,7 +80,13 @@ public:
         luisa::vector<std::byte> bytes;
         auto header = header_size();
         bytes.push_back_uninitialized(header + image.byte_size());
-        cmd_buffer << image.copy_to(bytes.data() + header) << [this, func = std::move(func), bytes = std::move(bytes), size = image.size(), storage = image.storage(), mip = image.mip_levels()] {
+        auto ptr = bytes.data() + header;
+        for (auto i : vstd::range(image.mip_levels())) {
+            auto view = image.view(i);
+            cmd_buffer << view.copy_to(ptr);
+            ptr += view.byte_size();
+        }
+        cmd_buffer << [this, func = std::move(func), bytes = std::move(bytes), size = image.size(), storage = image.storage(), mip = image.mip_levels()]() mutable {
             save_header(bytes, size.x, size.y, size.z, storage, mip);
             func(bytes);
         };

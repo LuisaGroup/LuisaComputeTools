@@ -1,5 +1,4 @@
 #include <tools/image_lib.h>
-#include <vstl/common.h>
 #include <core/binary_io_visitor.h>
 #include <stb/stb_image.h>
 #include <dsl/syntax.h>
@@ -30,7 +29,13 @@ Image<T> load_image_impl(IBinaryStream *bin_stream, Device &device, CommandBuffe
     data.push_back_uninitialized(byte_size);
     bin_stream->read(data);
     auto img = device.create_image<T>(header.storage, header.width, header.height, header.mip_level);
-    cmd_buffer << img.copy_from(data.data()) << [data = std::move(data)] {};
+    auto ptr = data.data();
+    for (auto i : vstd::range(header.mip_level)) {
+        auto view = img.view(i);
+        cmd_buffer << view.copy_from(ptr);
+        ptr += view.byte_size();
+    }
+    cmd_buffer << [data = std::move(data)] {};
     return img;
 }
 template<typename T>
@@ -42,7 +47,13 @@ Volume<T> load_volume_impl(IBinaryStream *bin_stream, Device &device, CommandBuf
     data.push_back_uninitialized(byte_size);
     bin_stream->read(data);
     auto img = device.create_volume<T>(header.storage, header.width, header.height, header.mip_level);
-    cmd_buffer << img.copy_from(data.data()) << [data = std::move(data)] {};
+    auto ptr = data.data();
+    for (auto i : vstd::range(header.mip_level)) {
+        auto view = img.view(i);
+        cmd_buffer << view.copy_from(ptr);
+        ptr += view.byte_size();
+    }
+    cmd_buffer << [data = std::move(data)] {};
     return img;
 }
 
