@@ -93,6 +93,7 @@ public:
     }
     Image<float> read_ldr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
     Image<float> read_hdr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
+    Image<float> read_exr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
     void generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer);
 };
 }// namespace luisa::compute

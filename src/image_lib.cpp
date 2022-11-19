@@ -4,6 +4,7 @@
 #include <dsl/syntax.h>
 #include <dsl/sugar.h>
 #include <filesystem>
+#include <tinyexr.h>
 namespace luisa::compute {
 size_t img_byte_size(PixelStorage storage, uint width, uint height, uint volume, uint mip_level) {
     size_t size = 0;
@@ -110,6 +111,22 @@ Image<float> ImageLib::read_hdr(luisa::string const &file_name, CommandBuffer &c
     auto img = _device.create_image<float>(PixelStorage::FLOAT4, x, y, mip_level);
     cmd_buffer << img.copy_from(ptr) << [ptr] {
         stbi_image_free(ptr);
+    };
+    if (mip_level > 1) {
+        generate_mip(img, cmd_buffer);
+    }
+    return img;
+}
+Image<float> ImageLib::read_exr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level) {
+    float *ptr;
+    int width, height;
+    char const *err;
+    if (LoadEXR(&ptr, &width, &height, file_name.c_str(), &err) < 0) {
+        LUISA_ERROR("Load EXR Error: {}", err);
+    }
+    auto img = _device.create_image<float>(PixelStorage::FLOAT4, width, height, mip_level);
+    cmd_buffer << img.copy_from(ptr) << [ptr] {
+        free(ptr);
     };
     if (mip_level > 1) {
         generate_mip(img, cmd_buffer);
