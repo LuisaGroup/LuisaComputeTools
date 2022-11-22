@@ -3,7 +3,6 @@
 #include <stb/stb_image.h>
 #include <dsl/syntax.h>
 #include <dsl/sugar.h>
-#include <filesystem>
 #include <tinyexr.h>
 namespace luisa::compute {
 size_t img_byte_size(PixelStorage storage, uint width, uint height, uint volume, uint mip_level) {
@@ -160,40 +159,114 @@ decltype(auto) mip_syncblock_func(uint block_count) {
         ava_thread_count = next_thread_count;
     };
 }
-template<typename Shader>
-struct GenMipFunc;
 template<typename... Args>
-struct GenMipFunc<Shader2D<Args...>> {
-    using value_type = Shader2D<Args...>;
-    static value_type get(Device &device, uint mip_level, std::filesystem::path const &dir) {
-        uint32_t block_count = 1 << mip_level;
-        Callable mip_group = mip_syncblock_func(block_count);
-        Kernel2D k = [&](Var<Args>... imgs) {
-            set_block_size(block_count, block_count);
-            auto local_coord = thread_id().xy();
-            UInt ava_thread_count = block_count;
-            auto coord = dispatch_id().xy();
-            ImageVar<float> *img_arr[] = {(&imgs)...};
-            Float4 tex_value = img_arr[0]->read(coord);
-            for (uint32_t i = 0; i < mip_level; ++i) {
-                mip_group(ava_thread_count, tex_value, *img_arr[i + 1]);
-            }
-        };
-        luisa::string file_name = "__gen_mip";
-        file_name += vstd::to_string(mip_level);
-        auto path = (dir / file_name).string<char, std::char_traits<char>, luisa::allocator<char>>();
-        return device.compile_to(k, path);
+static void gen_mip_func(vstd::optional<Shader2D<Args...>> &shader, Device &device, uint mip_level, std::filesystem::path const &dir) {
+    uint32_t block_count = 1 << mip_level;
+    Callable mip_group = mip_syncblock_func(block_count);
+    Kernel2D k = [&](Var<Args>... imgs) {
+        set_block_size(block_count, block_count);
+        auto local_coord = thread_id().xy();
+        UInt ava_thread_count = block_count;
+        auto coord = dispatch_id().xy();
+        ImageVar<float> *img_arr[] = {(&imgs)...};
+        Float4 tex_value = img_arr[0]->read(coord);
+        for (uint32_t i = 0; i < mip_level; ++i) {
+            mip_group(ava_thread_count, tex_value, *img_arr[i + 1]);
+        }
+    };
+    luisa::string file_name = "__gen_mip";
+    file_name += vstd::to_string(mip_level);
+    auto path = (dir / file_name).string<char, std::char_traits<char>, luisa::allocator<char>>();
+    shader.New(device.compile_to(k, path));
+}
+static UInt reverse_bits(UInt bits) {
+    bits = (bits << 16) | (bits >> 16);
+    bits = ((bits & 0x00ff00ff) << 8) | ((bits & 0xff00ff00) >> 8);
+    bits = ((bits & 0x0f0f0f0f) << 4) | ((bits & 0xf0f0f0f0) >> 4);
+    bits = ((bits & 0x33333333) << 2) | ((bits & 0xcccccccc) >> 2);
+    bits = ((bits & 0x55555555) << 1) | ((bits & 0xaaaaaaaa) >> 1);
+    return bits;
+}
+static Float Luma(Float3 const &Color) {
+    return (Color.y * 0.5f) + (Color.x + Color.z) * 0.25f;
+}
+const float tone_bound = 1e-4;
+static Float3 Tonemap(Float3 x) {
+    Float luma = Luma(x);
+    Float vv = (luma * (2 * tone_bound - 1 - luma));
+    return select((x * (tone_bound * tone_bound - luma) / vv), x, luma <= tone_bound);
+}
+static Float3 TonemapInvert(Float3 const &x) {
+    Float luma = Luma(x);
+    Float tonemapWeight = (tone_bound * tone_bound - (2 * tone_bound - 1) * luma) / (luma * (1 - luma));
+    return select(clamp(x * tonemapWeight, 0.0f, 256.0f), x, (luma <= tone_bound));
+}
+
+static Float2 hammersley(UInt const &Index, UInt const &NumSamples) {
+    return make_float2((Index.cast<float>() + 0.5f) / NumSamples.cast<float>(), (reverse_bits(Index).cast<float>() / 0xffffffffu));
+}
+constexpr float pi = 3.141592653589793f;
+
+Float3 ImportanceSampleGGX(Float3 const &N, Float2 const &E, Float const &Roughness) {
+    auto m = Roughness * Roughness;
+
+    auto Phi = 2.0f * pi * E.x;
+    auto CosTheta = sqrt((1.0f - E.y) / (1.0f + (m * m - 1.0f) * E.y));
+    auto SinTheta = sqrt(1.0f - CosTheta * CosTheta);
+
+    // from spherical coordinates to cartesian coordinates - halfway vector
+    Float3 H = Float3(SinTheta * cos(Phi), SinTheta * sin(Phi), CosTheta);
+
+    // from tangent-space H vector to world-space sample vector
+    auto UpVector = select(select(float3{0, 1, 0}, float3{1, 0, 0}, abs(N.x) < 0.7f), float3{0, 0, 1}, abs(N.z) < 0.7f);
+    auto TangentX = normalize(cross(UpVector, N));
+    auto TangentY = cross(N, TangentX);
+
+    return normalize(TangentX * H.x + TangentY * H.y + N * H.z);
+}
+static Float2 DirToUv(Float3 w) {
+    Float theta = acos(w.y);
+    Float phi = atan2(w.x, w.z);
+    return fract(make_float2(1.f - 0.5f * inv_pi * phi, theta * inv_pi - 1.0f));
+}
+static Float3 UvToDir(Float2 uv) {
+    uv.x = 1.0f - uv.x;
+    Float phi = 2.f * pi * uv.x;
+    Float theta = pi * uv.y;
+    Float sin_theta = sin(theta);
+    return normalize(make_float3(sin(phi) * sin_theta, cos(theta), cos(phi) * sin_theta));
+};
+
+static Float3 refl(ImageVar<float> const &tex, Float2 const &img_size, Float3 const &sampleDir, Float const &roughness) {
+    const uint spp = 8192;
+    Float3 result = make_float3(0.0f);
+    for (auto i : range(spp)) {
+        auto rand = hammersley(i, spp);
+        auto dir = ImportanceSampleGGX(sampleDir, rand, roughness);
+        auto uv = DirToUv(dir) * img_size;
+        result += Tonemap(tex.read(make_uint2(uv)).xyz()) * make_float3(1.0 / spp);
     }
+    return TonemapInvert(result);
+}
+static void refl_cubegen(ImageVar<float> read_img, Float2 img_size, ImageVar<float> out_img, Float roughness) {
+    auto coord = dispatch_id().xy();
+    auto uv = (make_float2(coord) + float2{0.5f}) / make_float2(dispatch_size().xy());
+    auto dir = UvToDir(uv);
+    auto color = refl(read_img, img_size, dir, roughness);
+    out_img.write(coord, make_float4(color, 1.0f));
 };
 }// namespace imglib_detail
-ImageLib::ImageLib(Device device, luisa::string shader_dir) : _device(std::move(device)) {
+ImageLib::ImageLib(Device device, luisa::string shader_dir) : _device(std::move(device)), _path(shader_dir) {
     using namespace imglib_detail;
     std::filesystem::path path(shader_dir);
-    _mip1_shader = GenMipFunc<decltype(_mip1_shader)>::get(_device, 1, path);
-    _mip2_shader = GenMipFunc<decltype(_mip2_shader)>::get(_device, 2, path);
-    _mip3_shader = GenMipFunc<decltype(_mip3_shader)>::get(_device, 3, path);
-    _mip4_shader = GenMipFunc<decltype(_mip4_shader)>::get(_device, 4, path);
-    _mip5_shader = GenMipFunc<decltype(_mip5_shader)>::get(_device, 5, path);
+    _mip1_shader.init_func = [this](auto &&opt) { gen_mip_func(opt, _device, 1, _path); };
+    _mip2_shader.init_func = [this](auto &&opt) { gen_mip_func(opt, _device, 2, _path); };
+    _mip3_shader.init_func = [this](auto &&opt) { gen_mip_func(opt, _device, 3, _path); };
+    _mip4_shader.init_func = [this](auto &&opt) { gen_mip_func(opt, _device, 4, _path); };
+    _mip5_shader.init_func = [this](auto &&opt) { gen_mip_func(opt, _device, 5, _path); };
+    _refl_map_gen.init_func = [this](auto &&opt) {
+        opt.New(_device.compile_to(Kernel2D{refl_cubegen}, "__refl_gen"));
+    };
 }
 void ImageLib::generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer) {
     switch (img.mip_levels()) {
@@ -201,23 +274,26 @@ void ImageLib::generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer) 
         case 1:
             return;
         case 2:
-            cmd_buffer << _mip1_shader(img.view(0), img.view(1)).dispatch(img.size());
+            cmd_buffer << (*_mip1_shader)(img.view(0), img.view(1)).dispatch(img.size());
             return;
         case 3:
-            cmd_buffer << _mip2_shader(img.view(0), img.view(1), img.view(2)).dispatch(img.size());
+            cmd_buffer << (*_mip2_shader)(img.view(0), img.view(1), img.view(2)).dispatch(img.size());
             return;
         case 4:
-            cmd_buffer << _mip3_shader(img.view(0), img.view(1), img.view(2), img.view(3)).dispatch(img.size());
+            cmd_buffer << (*_mip3_shader)(img.view(0), img.view(1), img.view(2), img.view(3)).dispatch(img.size());
             return;
         case 5:
-            cmd_buffer << _mip4_shader(img.view(0), img.view(1), img.view(2), img.view(3), img.view(4)).dispatch(img.size());
+            cmd_buffer << (*_mip4_shader)(img.view(0), img.view(1), img.view(2), img.view(3), img.view(4)).dispatch(img.size());
             return;
         case 6:
-            cmd_buffer << _mip5_shader(img.view(0), img.view(1), img.view(2), img.view(3), img.view(4), img.view(5)).dispatch(img.size());
+            cmd_buffer << (*_mip5_shader)(img.view(0), img.view(1), img.view(2), img.view(3), img.view(4), img.view(5)).dispatch(img.size());
             return;
         default:
             LUISA_ERROR("Mip-level larger than 6 can-not be supported!");
             return;
     }
+}
+void ImageLib::gen_cubemap_mip(CommandBuffer &cmd_buffer, ImageView<float> const &src, ImageView<float> const &dst, float roughness) {
+    cmd_buffer << (*_refl_map_gen)(src, make_float2(src.size()), dst, roughness).dispatch(dst.size());
 }
 }// namespace luisa::compute

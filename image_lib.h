@@ -4,20 +4,58 @@
 #include <runtime/volume.h>
 #include <runtime/command_buffer.h>
 #include <runtime/shader.h>
+#include <runtime/bindless_array.h>
 #include <vstl/common.h>
+#include <vstl/functional.h>
+#include <filesystem>
+
 namespace luisa::compute {
 class IBinaryStream;
+namespace detail {
+template<size_t i, template<typename...> typename Collection, typename T, typename... Ts>
+static constexpr decltype(auto) TypeAccumulator() {
+    if constexpr (i > 0) {
+        return TypeAccumulator<i - 1, Collection, T, T, Ts...>();
+    } else {
+        return vstd::TypeOf<Collection<T, Ts...>>{};
+    }
+}
+}// namespace detail
 class LC_TOOL_API ImageLib {
 public:
     using WriteFunc = luisa::move_only_function<void(luisa::span<std::byte const> data)>;
 
 private:
     Device _device;
-    Shader2D<Image<float>, Image<float>> _mip1_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>> _mip2_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>> _mip3_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> _mip4_shader;
-    Shader2D<Image<float>, Image<float>, Image<float>, Image<float>, Image<float>, Image<float>> _mip5_shader;
+
+    template<typename... T>
+    struct ShaderOptional2D {
+        using value_type = vstd::optional<Shader2D<T...>>;
+        value_type value;
+        vstd::function<void(value_type &)> init_func;
+        Shader2D<T...> &operator*() {
+            if (!value) {
+                init_func(value);
+            }
+            return *value;
+        }
+        Shader2D<T...> *operator->() {
+            if (!value) {
+                init_func(value);
+            }
+            return value.GetPtr();
+        }
+    };
+    template<typename T, size_t i>
+    using MipgenType = typename decltype(detail::TypeAccumulator<i, ShaderOptional2D, T>())::Type;
+    std::filesystem::path _path;
+    MipgenType<Image<float>, 1> _mip1_shader;
+    MipgenType<Image<float>, 2> _mip2_shader;
+    MipgenType<Image<float>, 3> _mip3_shader;
+    MipgenType<Image<float>, 4> _mip4_shader;
+    MipgenType<Image<float>, 5> _mip5_shader;
+    // src_tex, output_texture, roughness
+    ShaderOptional2D<Image<float>, float2, Image<float>, float> _refl_map_gen;
     ImageLib() = delete;
     Image<float> load_float_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
     Image<int> load_int_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
@@ -94,6 +132,7 @@ public:
     Image<float> read_ldr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
     Image<float> read_hdr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
     Image<float> read_exr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
+    void gen_cubemap_mip(CommandBuffer &cmd_buffer, ImageView<float> const &src, ImageView<float> const &dst, float roughness);
     void generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer);
 };
 }// namespace luisa::compute
