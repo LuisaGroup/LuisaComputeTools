@@ -33,13 +33,13 @@ private:
         using value_type = vstd::optional<Shader2D<T...>>;
         value_type value;
         vstd::function<void(value_type &)> init_func;
-        Shader2D<T...> &operator*() {
+        Shader2D<T...> &operator*() noexcept {
             if (!value) {
                 init_func(value);
             }
             return *value;
         }
-        Shader2D<T...> *operator->() {
+        Shader2D<T...> *operator->() noexcept {
             if (!value) {
                 init_func(value);
             }
@@ -57,26 +57,26 @@ private:
     // src_tex, output_texture, roughness
     ShaderOptional2D<Image<float>, float2, Image<float>, float> _refl_map_gen;
     ImageLib() = delete;
-    Image<float> load_float_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    Image<int> load_int_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    Image<uint32_t> load_uint_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    Volume<float> load_float_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    Volume<int> load_int_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    Volume<uint32_t> load_uint_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer);
-    size_t header_size();
+    Image<float> load_float_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    Image<int32_t> load_int_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    Image<uint32_t> load_uint_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    Volume<float> load_float_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    Volume<int32_t> load_int_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    Volume<uint32_t> load_uint_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept;
+    size_t header_size() noexcept;
     void save_header(
         luisa::span<std::byte> data,
-        uint width, uint height, uint volume,
+        uint32_t width, uint32_t height, uint32_t volume,
         PixelStorage storage,
-        uint mip);
+        uint32_t mip) noexcept;
 
 public:
-    ImageLib(Device device, luisa::string shader_dir);
+    ImageLib(Device device, luisa::string shader_dir) noexcept;
     ImageLib(ImageLib const &) = delete;
     ImageLib(ImageLib &&) = delete;
     template<typename T>
         requires(is_legal_image_element<T>)
-    Image<T> load_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) {
+    Image<T> load_image(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept {
         if constexpr (std::is_same_v<T, float>) {
             return load_float_image(bin_stream, cmd_buffer);
         } else if constexpr (std::is_same_v<T, int32_t>) {
@@ -87,7 +87,7 @@ public:
     }
     template<typename T>
         requires(is_legal_image_element<T>)
-    Volume<T> load_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) {
+    Volume<T> load_volume(IBinaryStream *bin_stream, CommandBuffer &cmd_buffer) noexcept {
         if constexpr (std::is_same_v<T, float>) {
             return load_float_image(bin_stream, cmd_buffer);
         } else if constexpr (std::is_same_v<T, int32_t>) {
@@ -97,7 +97,7 @@ public:
         }
     }
     template<typename T>
-    void save_image(Image<T> const &image, CommandBuffer &cmd_buffer, WriteFunc &&func) {
+    void save_image(Image<T> const &image, CommandBuffer &cmd_buffer, WriteFunc &&func) noexcept {
         luisa::vector<std::byte> bytes;
         auto header = header_size();
         bytes.push_back_uninitialized(header + image.byte_size());
@@ -114,7 +114,7 @@ public:
         };
     }
     template<typename T>
-    void save_volume(Volume<T> const &image, CommandBuffer &cmd_buffer, WriteFunc &&func) {
+    void save_volume(Volume<T> const &image, CommandBuffer &cmd_buffer, WriteFunc &&func) noexcept {
         luisa::vector<std::byte> bytes;
         auto header = header_size();
         bytes.push_back_uninitialized(header + image.byte_size());
@@ -129,10 +129,11 @@ public:
             func(bytes);
         };
     }
-    Image<float> read_ldr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
-    Image<float> read_hdr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
-    Image<float> read_exr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint mip_level);
-    void gen_cubemap_mip(CommandBuffer &cmd_buffer, ImageView<float> const &src, ImageView<float> const &dst, float roughness);
-    void generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer);
+    Image<float> read_ldr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint32_t mip_level) noexcept;
+    Image<float> read_hdr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint32_t mip_level) noexcept;
+    Image<float> read_exr(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint32_t mip_level) noexcept;
+    Image<float> read_exr_cubemap(luisa::string const &file_name, CommandBuffer &cmd_buffer, uint32_t mip_level, float roughness) noexcept;
+    void generate_mip(Image<float> const &img, CommandBuffer &cmd_buffer) noexcept;
+    void generate_cubemap_mip(Image<float> const &img, CommandBuffer &cmd_buffer, float roughness) noexcept;
 };
 }// namespace luisa::compute
